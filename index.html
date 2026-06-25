@@ -94,6 +94,7 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
 .src-badge{display:inline-block;font-size:9px;padding:2px 6px;border-radius:10px;margin-left:5px;vertical-align:middle;font-weight:700;letter-spacing:.3px}
 .sb-manual{background:var(--surface2);color:var(--text2)}
 .sb-csv{background:var(--blue-bg);color:var(--blue)}
+.sb-receipt{background:var(--green-bg);color:var(--green)}
 .empty{text-align:center;padding:36px 16px;color:var(--text3);font-size:14px}
 .empty svg{width:40px;height:40px;stroke:var(--text3);fill:none;stroke-width:1.5;margin:0 auto 12px;display:block}
 .hidden{display:none!important}
@@ -134,6 +135,16 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
 .catmgr-del{background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px;padding:4px;flex-shrink:0}
 .catmgr-del:hover{color:var(--red)}
 .catmgr-del:disabled{opacity:0.25;cursor:not-allowed}
+.list-item{cursor:pointer}
+.list-item.editing{cursor:default;flex-wrap:wrap;align-items:stretch;background:var(--surface2);border-radius:var(--radius-sm);padding:12px;margin:4px 0}
+.edit-row{display:flex;gap:6px;width:100%;margin-bottom:6px}
+.edit-row:last-child{margin-bottom:0}
+.edit-row input,.edit-row select{flex:1;padding:8px 10px;font-size:13px;font-family:'Noto Sans JP',sans-serif;border:1px solid var(--border2);border-radius:6px;background:var(--surface);color:var(--text);-webkit-appearance:none}
+.edit-actions{display:flex;gap:8px;width:100%;margin-top:4px}
+.edit-actions button{flex:1;padding:9px;font-size:13px;font-weight:700;border-radius:6px;border:none;cursor:pointer;font-family:'Noto Sans JP',sans-serif}
+.edit-save{background:var(--green);color:#fff}
+.edit-cancel{background:var(--surface);color:var(--text2);border:1px solid var(--border2)!important}
+.edit-delete{background:var(--red-bg);color:var(--red)}
 .upload-area{border:2px dashed var(--border2);border-radius:var(--radius-sm);padding:28px 16px;text-align:center;cursor:pointer;transition:background .15s}
 .upload-area:hover,.upload-area:active{background:var(--surface2)}
 .upload-area svg{width:36px;height:36px;stroke:var(--text3);fill:none;stroke-width:1.5;margin-bottom:8px}
@@ -838,6 +849,8 @@ function renderChart() {
   }).join('');
 }
 
+let editingEntryId = null;
+
 function renderHistory() {
   const el = document.getElementById('historyList');
   if (!entries.length) {
@@ -846,21 +859,87 @@ function renderHistory() {
   }
   const sorted = [...entries].sort((a,b)=>b.date.localeCompare(a.date));
   el.innerHTML = sorted.map(e=>{
+    if (e.id === editingEntryId) return renderHistoryEditRow(e);
+
     const cat=getCat(e.type,e.category);
     const sign=e.type==='income'?'+':'-';
     const color=e.type==='income'?'var(--green)':'var(--red)';
-    const srcClass=e.source==='csv'?'sb-csv':'sb-manual';
-    const srcLabel=e.source==='csv'?'カード':'手動';
-    return `<div class="list-item">
+    const srcMap = { csv:['sb-csv','カード'], receipt:['sb-receipt','レシート'], manual:['sb-manual','手動'] };
+    const [srcClass, srcLabel] = srcMap[e.source] || ['sb-manual','手動'];
+    return `<div class="list-item" onclick="startEditEntry('${e.id}')">
       <div class="li-icon" style="background:${cat.color}22">${cat.icon}</div>
       <div class="li-info">
         <div class="li-name">${e.name}<span class="src-badge ${srcClass}">${srcLabel}</span></div>
         <div class="li-sub">${e.date} · ${e.category}</div>
       </div>
       <div class="li-amt" style="color:${color}">${sign}${fmt(e.amount)}</div>
-      <button class="li-del" onclick="delEntry(${e.id})" aria-label="削除">×</button>
     </div>`;
   }).join('');
+}
+
+function renderHistoryEditRow(e) {
+  const C = getCATS();
+  const typeOptions = `<option value="expense"${e.type==='expense'?' selected':''}>支出</option><option value="income"${e.type==='income'?' selected':''}>収入</option>`;
+  const catOptions = Object.keys(C[e.type]).map(c =>
+    `<option value="${c}"${c===e.category?' selected':''}>${C[e.type][c].icon} ${c}</option>`
+  ).join('');
+  return `<div class="list-item editing" onclick="event.stopPropagation()">
+    <div class="edit-row">
+      <select id="edit-type-${e.id}" onchange="onEditTypeChange('${e.id}')">${typeOptions}</select>
+      <select id="edit-cat-${e.id}">${catOptions}</select>
+    </div>
+    <div class="edit-row">
+      <input type="text" id="edit-name-${e.id}" value="${e.name.replace(/"/g,'&quot;')}" placeholder="メモ" maxlength="30">
+      <input type="number" id="edit-amt-${e.id}" value="${e.amount}" min="0" placeholder="金額">
+    </div>
+    <div class="edit-row">
+      <input type="date" id="edit-date-${e.id}" value="${e.date}">
+    </div>
+    <div class="edit-actions">
+      <button class="edit-delete" onclick="deleteEntryFromEdit('${e.id}')">削除</button>
+      <button class="edit-cancel" onclick="cancelEditEntry()">キャンセル</button>
+      <button class="edit-save" onclick="saveEditEntry('${e.id}')">保存</button>
+    </div>
+  </div>`;
+}
+
+function startEditEntry(id) {
+  editingEntryId = id;
+  renderHistory();
+}
+
+function cancelEditEntry() {
+  editingEntryId = null;
+  renderHistory();
+}
+
+function onEditTypeChange(id) {
+  const type = document.getElementById(`edit-type-${id}`).value;
+  const C = getCATS();
+  const catSel = document.getElementById(`edit-cat-${id}`);
+  catSel.innerHTML = Object.keys(C[type]).map(c => `<option value="${c}">${C[type][c].icon} ${c}</option>`).join('');
+}
+
+function saveEditEntry(id) {
+  const original = entries.find(e => e.id === id);
+  if (!original) return;
+  const name = document.getElementById(`edit-name-${id}`).value.trim();
+  const amount = parseInt(document.getElementById(`edit-amt-${id}`).value);
+  const type = document.getElementById(`edit-type-${id}`).value;
+  const category = document.getElementById(`edit-cat-${id}`).value;
+  const date = document.getElementById(`edit-date-${id}`).value;
+  if (!name) { alert('品目名を入力してください'); return; }
+  if (!amount || amount <= 0) { alert('金額を正しく入力してください'); return; }
+  if (!date) { alert('日付を入力してください'); return; }
+  saveEntry({ ...original, name, amount, type, category, date });
+  editingEntryId = null;
+  renderHistory();
+}
+
+function deleteEntryFromEdit(id) {
+  if (!confirm('この記録を削除しますか？')) return;
+  editingEntryId = null;
+  removeEntry(id);
 }
 
 function delEntry(id) {
