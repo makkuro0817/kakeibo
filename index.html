@@ -26,9 +26,10 @@
   const db = getFirestore(fbApp);
   const entriesCol = collection(db, "kakeibo_entries");
   const subsCol = collection(db, "kakeibo_subscriptions");
+  const catsCol = collection(db, "kakeibo_categories");
 
   // グローバルに公開（通常scriptから呼べるように）
-  window.__firebase = { db, entriesCol, subsCol, doc, setDoc, deleteDoc, onSnapshot };
+  window.__firebase = { db, entriesCol, subsCol, catsCol, doc, setDoc, deleteDoc, onSnapshot };
 </script>
 <style>
 :root {
@@ -121,6 +122,18 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
 .sub-amt{font-size:14px;font-weight:700;font-family:'DM Mono',monospace;white-space:nowrap;color:var(--text)}
 .sub-del{background:none;border:none;cursor:pointer;color:var(--text3);font-size:18px;padding:4px;flex-shrink:0;transition:color .15s}
 .sub-del:hover{color:var(--red)}
+.cat-type-toggle{display:flex;gap:6px;margin-bottom:12px}
+.icon-picker{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.icon-pick-btn{width:36px;height:36px;border-radius:8px;border:1px solid var(--border2);background:var(--surface);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.icon-pick-btn.active{border-color:var(--accent);background:var(--green-bg)}
+.catmgr-row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border)}
+.catmgr-row:last-child{border-bottom:none}
+.catmgr-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.catmgr-name{flex:1;font-size:14px;font-weight:500}
+.catmgr-tag{font-size:10px;padding:2px 7px;border-radius:10px;background:var(--surface2);color:var(--text3);margin-left:6px}
+.catmgr-del{background:none;border:none;cursor:pointer;color:var(--text3);font-size:16px;padding:4px;flex-shrink:0}
+.catmgr-del:hover{color:var(--red)}
+.catmgr-del:disabled{opacity:0.25;cursor:not-allowed}
 .upload-area{border:2px dashed var(--border2);border-radius:var(--radius-sm);padding:28px 16px;text-align:center;cursor:pointer;transition:background .15s}
 .upload-area:hover,.upload-area:active{background:var(--surface2)}
 .upload-area svg{width:36px;height:36px;stroke:var(--text3);fill:none;stroke-width:1.5;margin-bottom:8px}
@@ -173,6 +186,9 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
   </button>
   <button class="tab-btn" onclick="showTab('sub')">
     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>固定費
+  </button>
+  <button class="tab-btn" onclick="showTab('catmgr')">
+    <svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z"/><path d="M17 14v6M14 17h6"/></svg>カテゴリ
   </button>
   <button class="tab-btn" onclick="showTab('history')">
     <svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>履歴
@@ -281,13 +297,7 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
       </div>
       <div class="form-row">
         <input type="number" id="subAmtInput" placeholder="月額（円）" min="0">
-        <select id="subCatSelect">
-          <option value="娯楽">🎮 娯楽</option>
-          <option value="通信">📱 通信</option>
-          <option value="光熱費">💡 光熱費</option>
-          <option value="日用品">🛒 日用品</option>
-          <option value="その他">📦 その他</option>
-        </select>
+        <select id="subCatSelect"></select>
       </div>
       <div class="form-row">
         <select id="subDayInput" style="flex:1">
@@ -299,6 +309,27 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
     <div class="card">
       <div class="sec-label">登録済みの固定費</div>
       <div id="subList"><div class="empty">まだ登録されていません</div></div>
+    </div>
+  </div>
+
+  <!-- カテゴリ管理 -->
+  <div id="tab-catmgr" class="hidden">
+    <div class="card">
+      <div class="sec-label">新しいカテゴリを追加</div>
+      <div class="cat-type-toggle">
+        <button class="toggle-btn active" id="catmgrBtnExp" onclick="setCatMgrType('expense')">支出用</button>
+        <button class="toggle-btn" id="catmgrBtnInc" onclick="setCatMgrType('income')">収入用</button>
+      </div>
+      <div class="form-row">
+        <input type="text" id="newCatName" placeholder="カテゴリ名（例：ペット）" maxlength="12">
+      </div>
+      <div class="sec-label" style="margin-top:4px;font-size:11px">アイコンを選ぶ</div>
+      <div class="icon-picker" id="iconPicker"></div>
+      <button class="btn btn-blue" onclick="addCustomCat()">+ カテゴリを追加</button>
+    </div>
+    <div class="card">
+      <div class="sec-label">カテゴリ一覧</div>
+      <div id="catmgrList"></div>
     </div>
   </div>
 
@@ -315,7 +346,7 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
 </div>
 
 <script>
-const CATS = {
+const BASE_CATS = {
   expense: {
     '食費':   {icon:'🍜',color:'#D85A30'},
     '外食':   {icon:'🍽️',color:'#E24B4A'},
@@ -334,6 +365,19 @@ const CATS = {
     'その他': {icon:'✨',color:'#888780'},
   }
 };
+
+// カスタムカテゴリ（Firestoreから読み込んでマージ）
+let customCats = { expense: {}, income: {} };
+
+// 自由に追加できる色のパレット（カスタムカテゴリ用に順番に割り当て）
+const CUSTOM_COLOR_PALETTE = ['#9C6ADE','#3E9C9C','#C77B3E','#5A7FBA','#B85C8A','#6F9650','#A0522D','#4F6D7A'];
+
+function getCATS() {
+  return {
+    expense: { ...BASE_CATS.expense, ...customCats.expense },
+    income: { ...BASE_CATS.income, ...customCats.income },
+  };
+}
 
 let entries = [];
 let subscriptions = [];
@@ -366,7 +410,7 @@ function initFirebaseSync() {
       if (syncEl) { syncEl.textContent = '☁️ 同期済み'; }
       renderSummary();
       const activeBtn = document.querySelector('.tab-btn.active');
-      const names = ['chart','csv','receipt','manual','sub','history'];
+      const names = ['chart','csv','receipt','manual','sub','catmgr','history'];
       const idx = activeBtn ? Array.from(document.querySelectorAll('.tab-btn')).indexOf(activeBtn) : 0;
       const activeName = names[idx] || 'chart';
       if (activeName === 'chart') renderChart();
@@ -383,11 +427,33 @@ function initFirebaseSync() {
         subscriptions.push({ ...data, id: d.id });
       });
       const activeBtn = document.querySelector('.tab-btn.active');
-      const names = ['chart','csv','receipt','manual','sub','history'];
+      const names = ['chart','csv','receipt','manual','sub','catmgr','history'];
       const idx = activeBtn ? Array.from(document.querySelectorAll('.tab-btn')).indexOf(activeBtn) : 0;
       if (names[idx] === 'sub') renderSubs();
     }, (err) => {
       console.error('Firestore(サブスク)同期エラー:', err);
+    });
+  });
+  waitForFirebase(({ catsCol, onSnapshot }) => {
+    onSnapshot(catsCol, (snap) => {
+      customCats = { expense: {}, income: {} };
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.type && data.name) {
+          customCats[data.type][data.name] = { icon: data.icon, color: data.color, id: d.id };
+        }
+      });
+      updateCats();
+      updateSubCatSelect();
+      const activeBtn = document.querySelector('.tab-btn.active');
+      const names = ['chart','csv','receipt','manual','sub','catmgr','history'];
+      const idx = activeBtn ? Array.from(document.querySelectorAll('.tab-btn')).indexOf(activeBtn) : 0;
+      const activeName = names[idx];
+      if (activeName === 'catmgr') renderCatMgr();
+      if (activeName === 'chart')  renderChart();
+      if (activeName === 'history') renderHistory();
+    }, (err) => {
+      console.error('Firestore(カテゴリ)同期エラー:', err);
     });
   });
 }
@@ -422,6 +488,77 @@ function addSub() {
 
 function delSub(id) {
   removeSub(id);
+}
+
+/* ===== カテゴリ管理 ===== */
+let catMgrType = 'expense';
+let selectedIcon = '🏷️';
+const ICON_CHOICES = ['🏷️','🐾','🎁','🚗','🏠','📚','🏋️','✈️','🎨','🌿','👶','🧴','🍺','🎵','💰','🛠️','🧾','📺'];
+
+function setCatMgrType(type) {
+  catMgrType = type;
+  document.getElementById('catmgrBtnExp').classList.toggle('active', type==='expense');
+  document.getElementById('catmgrBtnInc').classList.toggle('active', type==='income');
+  renderCatMgr();
+}
+
+function buildIconPicker() {
+  const el = document.getElementById('iconPicker');
+  el.innerHTML = ICON_CHOICES.map(ic =>
+    `<button type="button" class="icon-pick-btn${ic===selectedIcon?' active':''}" onclick="selectIcon('${ic}')">${ic}</button>`
+  ).join('');
+}
+
+function selectIcon(ic) {
+  selectedIcon = ic;
+  buildIconPicker();
+}
+
+function saveCustomCat(catData) {
+  waitForFirebase(({ catsCol, doc, setDoc }) => {
+    const id = catData.id || genId();
+    const { id: _drop, ...rest } = catData;
+    setDoc(doc(catsCol, id), rest);
+  });
+}
+
+function removeCustomCat(id) {
+  waitForFirebase(({ catsCol, doc, deleteDoc }) => {
+    deleteDoc(doc(catsCol, id));
+  });
+}
+
+function addCustomCat() {
+  const name = document.getElementById('newCatName').value.trim();
+  if (!name) { alert('カテゴリ名を入力してください'); return; }
+  const C = getCATS();
+  if (C[catMgrType][name]) { alert('同じ名前のカテゴリが既にあります'); return; }
+  const usedColors = Object.values(C[catMgrType]).map(v => v.color);
+  const color = CUSTOM_COLOR_PALETTE.find(c => !usedColors.includes(c)) || CUSTOM_COLOR_PALETTE[0];
+  saveCustomCat({ id: genId(), type: catMgrType, name, icon: selectedIcon, color });
+  document.getElementById('newCatName').value = '';
+}
+
+function delCustomCat(id) {
+  if (!confirm('このカテゴリを削除しますか？\n（このカテゴリで記録済みのデータは残ります）')) return;
+  removeCustomCat(id);
+}
+
+function renderCatMgr() {
+  buildIconPicker();
+  const C = getCATS();
+  const el = document.getElementById('catmgrList');
+  const entriesOfType = Object.entries(C[catMgrType]);
+  el.innerHTML = entriesOfType.map(([name, v]) => {
+    const customEntry = customCats[catMgrType] && customCats[catMgrType][name];
+    const tag = customEntry ? '<span class="catmgr-tag">カスタム</span>' : '<span class="catmgr-tag">標準</span>';
+    const delId = customEntry ? customEntry.id : null;
+    return `<div class="catmgr-row">
+      <div class="catmgr-icon" style="background:${v.color}22">${v.icon}</div>
+      <div class="catmgr-name">${name}${tag}</div>
+      <button class="catmgr-del" ${delId ? `onclick="delCustomCat('${delId}')"` : 'disabled'} aria-label="削除">×</button>
+    </div>`;
+  }).join('');
 }
 
 /* ===== Claude貼り付け取り込み ===== */
@@ -501,8 +638,9 @@ function renderPasteResult() {
     el.innerHTML = '<div class="empty">読み取れる品目が見つかりませんでした。形式を確認してください。</div>';
     return;
   }
-  const catOptions = Object.keys(CATS.expense)
-    .map(c => `<option value="${c}">${CATS.expense[c].icon} ${c}</option>`).join('');
+  const C = getCATS();
+  const catOptions = Object.keys(C.expense)
+    .map(c => `<option value="${c}">${C.expense[c].icon} ${c}</option>`).join('');
   el.innerHTML = pastedScanned.map((item, i) => {
     const cat = getCat('expense', item.category);
     return `<div class="result-item">
@@ -518,7 +656,7 @@ function renderPasteResult() {
   }).join('');
   pastedScanned.forEach((item, i) => {
     const sel = el.children[i].querySelector('.r-cat-select');
-    if (sel) sel.value = CATS.expense[item.category] ? item.category : 'その他';
+    if (sel) sel.value = C.expense[item.category] ? item.category : 'その他';
   });
 }
 
@@ -593,26 +731,38 @@ document.getElementById('monthLabel').textContent =
 document.getElementById('dateInput').value = new Date().toISOString().slice(0,10);
 
 const fmt = n => '¥' + Math.round(n).toLocaleString('ja-JP');
-const getCat = (type,name) => (CATS[type]&&CATS[type][name])||{icon:'📦',color:'#888780'};
+const getCat = (type,name) => { const C = getCATS(); return (C[type]&&C[type][name])||{icon:'📦',color:'#888780'}; };
 
 function showTab(name) {
-  ['chart','csv','receipt','manual','sub','history'].forEach(t => {
+  ['chart','csv','receipt','manual','sub','catmgr','history'].forEach(t => {
     document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
   });
   document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    b.classList.toggle('active', ['chart','csv','receipt','manual','sub','history'][i]===name);
+    b.classList.toggle('active', ['chart','csv','receipt','manual','sub','catmgr','history'][i]===name);
   });
   if (name==='history') renderHistory();
   if (name==='chart')   renderChart();
   if (name==='sub')     renderSubs();
+  if (name==='catmgr')  renderCatMgr();
 }
 
 function updateCats() {
   const type = document.getElementById('typeSelect').value;
+  const C = getCATS();
   document.getElementById('catSelect').innerHTML =
-    Object.keys(CATS[type]).map(c=>`<option>${c}</option>`).join('');
+    Object.keys(C[type]).map(c=>`<option value="${c}">${C[type][c].icon} ${c}</option>`).join('');
 }
 updateCats();
+
+function updateSubCatSelect() {
+  const C = getCATS();
+  const sel = document.getElementById('subCatSelect');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = Object.keys(C.expense).map(c=>`<option value="${c}">${C.expense[c].icon} ${c}</option>`).join('');
+  if (current && C.expense[current]) sel.value = current;
+}
+updateSubCatSelect();
 
 function setMode(mode) {
   chartMode = mode;
@@ -768,7 +918,7 @@ function onCsvLoad(e) {
       <div class="col-map-row"><label>店舗・品目</label><select id="mapName">${noneOpt}${headerOpts}</select></div>
       <div class="col-map-row"><label>金額列</label><select id="mapAmt">${noneOpt}${headerOpts}</select></div>
       <div class="col-map-row"><label>カテゴリ</label><select id="mapCat">
-        ${Object.keys(CATS.expense).map(c=>`<option value="${c}">${c}</option>`).join('')}
+        ${Object.entries(getCATS().expense).map(([c,v])=>`<option value="${c}">${v.icon} ${c}</option>`).join('')}
       </select></div>`;
 
     // ヘッダー名からカラムを自動推定
