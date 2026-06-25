@@ -25,9 +25,10 @@
   const fbApp = initializeApp(firebaseConfig);
   const db = getFirestore(fbApp);
   const entriesCol = collection(db, "kakeibo_entries");
+  const subsCol = collection(db, "kakeibo_subscriptions");
 
   // グローバルに公開（通常scriptから呼べるように）
-  window.__firebase = { db, entriesCol, doc, setDoc, deleteDoc, onSnapshot };
+  window.__firebase = { db, entriesCol, subsCol, doc, setDoc, deleteDoc, onSnapshot };
 </script>
 <style>
 :root {
@@ -108,6 +109,39 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
 .col-map-row{display:flex;align-items:center;gap:8px;font-size:13px}
 .col-map-row label{flex:0 0 80px;color:var(--text2);font-weight:500}
 .col-map-row select{flex:1;padding:7px 10px;font-size:13px;font-family:'Noto Sans JP',sans-serif;border:1px solid var(--border2);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);-webkit-appearance:none}
+.sub-total-card{background:linear-gradient(135deg,var(--blue-bg),var(--surface2));border-radius:var(--radius);padding:16px;margin-bottom:14px;text-align:center;border:1px solid var(--border)}
+.sub-total-card .lbl{font-size:12px;color:var(--text2);margin-bottom:4px}
+.sub-total-card .amt{font-size:24px;font-weight:700;font-family:'DM Mono',monospace;color:var(--blue)}
+.sub-item{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--border)}
+.sub-item:last-child{border-bottom:none}
+.sub-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.sub-info{flex:1;min-width:0}
+.sub-name{font-size:14px;font-weight:500}
+.sub-sub{font-size:11px;color:var(--text3);margin-top:2px}
+.sub-amt{font-size:14px;font-weight:700;font-family:'DM Mono',monospace;white-space:nowrap;color:var(--text)}
+.sub-del{background:none;border:none;cursor:pointer;color:var(--text3);font-size:18px;padding:4px;flex-shrink:0;transition:color .15s}
+.sub-del:hover{color:var(--red)}
+.upload-area{border:2px dashed var(--border2);border-radius:var(--radius-sm);padding:28px 16px;text-align:center;cursor:pointer;transition:background .15s}
+.upload-area:hover,.upload-area:active{background:var(--surface2)}
+.upload-area svg{width:36px;height:36px;stroke:var(--text3);fill:none;stroke-width:1.5;margin-bottom:8px}
+.upload-area .u-hint{font-size:14px;color:var(--text2);font-weight:500}
+.upload-area .u-hint2{font-size:12px;color:var(--text3);margin-top:4px}
+.preview-img{width:100%;max-height:160px;object-fit:contain;border-radius:var(--radius-sm);border:1px solid var(--border);margin-bottom:10px}
+.loading{text-align:center;padding:20px;font-size:13px;color:var(--text2);display:flex;align-items:center;justify-content:center;gap:8px}
+.spinner{width:18px;height:18px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+.result-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.result-item:last-child{border-bottom:none}
+.r-icon{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.r-info{flex:1;min-width:0}
+.r-name{font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.r-sub{font-size:11px;color:var(--text3);margin-top:2px}
+.r-amt{font-size:14px;font-weight:700;font-family:'DM Mono',monospace;color:var(--red);white-space:nowrap;margin-right:4px}
+.r-cat-select{font-size:12px;padding:5px 6px;border:1px solid var(--border2);border-radius:6px;background:var(--surface);color:var(--text);-webkit-appearance:none;flex-shrink:0;max-width:92px}
+.api-key-box{background:var(--surface2);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px}
+.api-key-box input{width:100%;padding:8px 10px;font-size:13px;font-family:'DM Mono',monospace;border:1px solid var(--border2);border-radius:6px;background:var(--surface);color:var(--text);margin-top:6px}
+.api-key-box .lbl2{font-size:12px;color:var(--text2);display:flex;align-items:center;justify-content:space-between}
+.api-key-box .saved-tag{font-size:10px;color:var(--green);font-weight:700}
 </style>
 </head>
 <body>
@@ -135,8 +169,14 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
   <button class="tab-btn" onclick="showTab('csv')">
     <svg viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="5" rx="2"/><path d="M2 10h20"/></svg>カード
   </button>
+  <button class="tab-btn" onclick="showTab('receipt')">
+    <svg viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></svg>レシート
+  </button>
   <button class="tab-btn" onclick="showTab('manual')">
     <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>手動
+  </button>
+  <button class="tab-btn" onclick="showTab('sub')">
+    <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>固定費
   </button>
   <button class="tab-btn" onclick="showTab('history')">
     <svg viewBox="0 0 24 24"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>履歴
@@ -190,6 +230,42 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
     </div>
   </div>
 
+  <!-- レシート読み取り（AI） -->
+  <div id="tab-receipt" class="hidden">
+    <div class="card">
+      <div class="sec-label">APIキー設定</div>
+      <div class="api-key-box">
+        <div class="lbl2">
+          <span>Anthropic APIキー</span>
+          <span class="saved-tag hidden" id="apiKeySavedTag">✓ 保存済み</span>
+        </div>
+        <input type="password" id="apiKeyInput" placeholder="sk-ant-...">
+        <button class="btn btn-gray" style="margin-top:8px" onclick="saveApiKey()">このブラウザに保存</button>
+      </div>
+      <div class="info-box">
+        APIキーはこのブラウザ内（localStorage）にのみ保存され、Firestoreや他の場所には送信されません。<br>
+        キーは <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> から取得できます。
+      </div>
+    </div>
+    <div class="card">
+      <div class="sec-label">レシート画像を読み取る</div>
+      <input type="file" id="imgInput" accept="image/*" class="hidden" onchange="onImgChange(event)">
+      <img id="previewImg" class="preview-img hidden">
+      <div class="upload-area" id="imgArea" onclick="document.getElementById('imgInput').click()">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        <div class="u-hint">レシート画像を選択</div>
+        <div class="u-hint2">タップして写真を選ぶ</div>
+      </div>
+      <button class="btn btn-blue hidden" id="scanBtn" onclick="scanReceipt()">✦ AIで読み取る</button>
+      <div id="imgLoading" class="hidden loading"><div class="spinner"></div>AIがレシートを解析中...</div>
+      <div id="imgResult" class="hidden">
+        <div class="sec-label" style="margin-top:14px">読み取り結果（カテゴリは変更できます）</div>
+        <div id="imgItems"></div>
+        <button class="btn btn-green" onclick="addAllImg()">✓ すべて家計簿に追加</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 手動入力 -->
   <div id="tab-manual" class="hidden">
     <div class="card">
@@ -207,6 +283,40 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
       </div>
       <input type="date" id="dateInput" style="width:100%;padding:10px 12px;font-size:14px;font-family:'Noto Sans JP',sans-serif;border:1px solid var(--border2);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);outline:none;margin-bottom:0">
       <button class="btn btn-blue" onclick="addManual()">+ 追加する</button>
+    </div>
+  </div>
+
+  <!-- 固定費・サブスク -->
+  <div id="tab-sub" class="hidden">
+    <div class="sub-total-card">
+      <div class="lbl">月額固定費 合計</div>
+      <div class="amt" id="subTotal">¥0</div>
+    </div>
+    <div class="card">
+      <div class="sec-label">サブスクを追加</div>
+      <div class="form-row">
+        <input type="text" id="subNameInput" placeholder="サービス名（例：Netflix）" maxlength="30">
+      </div>
+      <div class="form-row">
+        <input type="number" id="subAmtInput" placeholder="月額（円）" min="0">
+        <select id="subCatSelect">
+          <option value="娯楽">🎮 娯楽</option>
+          <option value="通信">📱 通信</option>
+          <option value="光熱費">💡 光熱費</option>
+          <option value="日用品">🛒 日用品</option>
+          <option value="その他">📦 その他</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <select id="subDayInput" style="flex:1">
+          <option value="">支払い日（任意）</option>
+        </select>
+      </div>
+      <button class="btn btn-blue" onclick="addSub()">+ 固定費を追加</button>
+    </div>
+    <div class="card">
+      <div class="sec-label">登録済みの固定費</div>
+      <div id="subList"><div class="empty">まだ登録されていません</div></div>
     </div>
   </div>
 
@@ -244,6 +354,7 @@ const CATS = {
 };
 
 let entries = [];
+let subscriptions = [];
 let chartMode = 'expense', donutChart = null;
 let csvHeaders = [], csvRows = [];
 let fbReady = false;
@@ -273,7 +384,7 @@ function initFirebaseSync() {
       if (syncEl) { syncEl.textContent = '☁️ 同期済み'; }
       renderSummary();
       const activeBtn = document.querySelector('.tab-btn.active');
-      const names = ['chart','csv','manual','history'];
+      const names = ['chart','csv','receipt','manual','sub','history'];
       const idx = activeBtn ? Array.from(document.querySelectorAll('.tab-btn')).indexOf(activeBtn) : 0;
       const activeName = names[idx] || 'chart';
       if (activeName === 'chart') renderChart();
@@ -282,6 +393,230 @@ function initFirebaseSync() {
       console.error('Firestore同期エラー:', err);
     });
   });
+  waitForFirebase(({ subsCol, onSnapshot }) => {
+    onSnapshot(subsCol, (snap) => {
+      subscriptions = [];
+      snap.forEach(d => {
+        const data = d.data();
+        subscriptions.push({ ...data, id: d.id });
+      });
+      const activeBtn = document.querySelector('.tab-btn.active');
+      const names = ['chart','csv','receipt','manual','sub','history'];
+      const idx = activeBtn ? Array.from(document.querySelectorAll('.tab-btn')).indexOf(activeBtn) : 0;
+      if (names[idx] === 'sub') renderSubs();
+    }, (err) => {
+      console.error('Firestore(サブスク)同期エラー:', err);
+    });
+  });
+}
+
+function saveSub(sub) {
+  waitForFirebase(({ subsCol, doc, setDoc }) => {
+    const id = sub.id || genId();
+    const { id: _drop, ...rest } = sub;
+    setDoc(doc(subsCol, id), rest);
+  });
+}
+
+function removeSub(id) {
+  waitForFirebase(({ subsCol, doc, deleteDoc }) => {
+    deleteDoc(doc(subsCol, id));
+  });
+}
+
+function addSub() {
+  const name = document.getElementById('subNameInput').value.trim();
+  const amt = parseInt(document.getElementById('subAmtInput').value);
+  const cat = document.getElementById('subCatSelect').value;
+  const day = document.getElementById('subDayInput').value;
+  if (!name) { alert('サービス名を入力してください'); return; }
+  if (!amt || amt <= 0) { alert('月額を入力してください'); return; }
+  saveSub({ id: genId(), name, amount: amt, category: cat, day: day || null });
+  document.getElementById('subNameInput').value = '';
+  document.getElementById('subAmtInput').value = '';
+  document.getElementById('subDayInput').value = '';
+  renderSubs();
+}
+
+function delSub(id) {
+  removeSub(id);
+}
+
+/* ===== APIキー管理 ===== */
+const API_KEY_STORAGE = 'kakeibo_anthropic_api_key';
+
+function loadApiKey() {
+  return localStorage.getItem(API_KEY_STORAGE) || '';
+}
+
+function saveApiKey() {
+  const key = document.getElementById('apiKeyInput').value.trim();
+  if (!key) { alert('APIキーを入力してください'); return; }
+  localStorage.setItem(API_KEY_STORAGE, key);
+  document.getElementById('apiKeySavedTag').classList.remove('hidden');
+  alert('このブラウザに保存しました');
+}
+
+function initApiKeyField() {
+  const saved = loadApiKey();
+  if (saved) {
+    document.getElementById('apiKeyInput').value = saved;
+    document.getElementById('apiKeySavedTag').classList.remove('hidden');
+  }
+}
+
+/* ===== レシート読み取り（AI） ===== */
+let receiptBase64 = null;
+let imgScanned = [];
+
+function onImgChange(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    receiptBase64 = ev.target.result.split(',')[1];
+    const img = document.getElementById('previewImg');
+    img.src = ev.target.result;
+    img.classList.remove('hidden');
+    document.getElementById('imgArea').classList.add('hidden');
+    document.getElementById('scanBtn').classList.remove('hidden');
+    document.getElementById('imgResult').classList.add('hidden');
+  };
+  reader.readAsDataURL(file);
+}
+
+async function scanReceipt() {
+  const apiKey = loadApiKey();
+  if (!apiKey) {
+    alert('先にAPIキーを入力して保存してください');
+    return;
+  }
+  document.getElementById('scanBtn').classList.add('hidden');
+  document.getElementById('imgLoading').classList.remove('hidden');
+  document.getElementById('imgResult').classList.add('hidden');
+
+  const catList = Object.keys(CATS.expense).join('、');
+  const prompt = `このレシート画像を解析して、購入品目と金額を読み取り、JSON配列で返してください。\nカテゴリ: ${catList}\n形式（説明文や\`\`\`は不要）:\n[{"name":"品目名","amount":金額(数値),"category":"カテゴリ名"}]\n読み取れない場合は []`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: receiptBase64 } },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      })
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('APIエラー: ' + data.error.message);
+      imgScanned = [];
+    } else {
+      const raw = data.content.map(b => b.text || '').join('').trim().replace(/```json|```/g,'').trim();
+      let items = [];
+      try { items = JSON.parse(raw); } catch(e) { items = []; }
+      imgScanned = items.filter(i => i.name && i.amount > 0);
+    }
+    renderImgResult();
+    document.getElementById('imgResult').classList.remove('hidden');
+  } catch (err) {
+    alert('読み取りに失敗しました: ' + err.message);
+    imgScanned = [];
+    renderImgResult();
+    document.getElementById('imgResult').classList.remove('hidden');
+  }
+  document.getElementById('imgLoading').classList.add('hidden');
+}
+
+function renderImgResult() {
+  const el = document.getElementById('imgItems');
+  if (!imgScanned.length) {
+    el.innerHTML = '<div class="empty">読み取れませんでした。別の画像をお試しください。</div>';
+    return;
+  }
+  const catOptions = Object.keys(CATS.expense)
+    .map(c => `<option value="${c}">${CATS.expense[c].icon} ${c}</option>`).join('');
+  el.innerHTML = imgScanned.map((item, i) => {
+    const cat = getCat('expense', item.category);
+    return `<div class="result-item">
+      <div class="r-icon" style="background:${cat.color}22">${cat.icon}</div>
+      <div class="r-info">
+        <div class="r-name">${item.name}</div>
+        <div class="r-sub">${fmt(item.amount)}</div>
+      </div>
+      <select class="r-cat-select" onchange="updateScannedCat(${i}, this.value)">
+        ${catOptions}
+      </select>
+    </div>`;
+  }).join('');
+  // 各セレクトに現在の値をセット
+  imgScanned.forEach((item, i) => {
+    const sel = el.children[i].querySelector('.r-cat-select');
+    if (sel) sel.value = CATS.expense[item.category] ? item.category : 'その他';
+  });
+}
+
+function updateScannedCat(index, newCat) {
+  if (imgScanned[index]) {
+    imgScanned[index].category = newCat;
+    const icon = getCat('expense', newCat);
+    const iconEl = document.getElementById('imgItems').children[index].querySelector('.r-icon');
+    if (iconEl) {
+      iconEl.textContent = icon.icon;
+      iconEl.style.background = icon.color + '22';
+    }
+  }
+}
+
+function addAllImg() {
+  imgScanned.forEach(item => {
+    saveEntry({ id: genId(), type:'expense', category:item.category, name:item.name, amount:item.amount, date: new Date().toISOString().slice(0,10), source:'receipt' });
+  });
+  imgScanned = [];
+  receiptBase64 = null;
+  document.getElementById('previewImg').classList.add('hidden');
+  document.getElementById('imgArea').classList.remove('hidden');
+  document.getElementById('scanBtn').classList.add('hidden');
+  document.getElementById('imgResult').classList.add('hidden');
+  document.getElementById('imgInput').value = '';
+  showTab('chart');
+}
+
+function renderSubs() {
+  const total = subscriptions.reduce((s, x) => s + x.amount, 0);
+  document.getElementById('subTotal').textContent = fmt(total);
+
+  const el = document.getElementById('subList');
+  if (!subscriptions.length) {
+    el.innerHTML = '<div class="empty">まだ登録されていません</div>';
+    return;
+  }
+  const sorted = [...subscriptions].sort((a,b) => (a.day||99) - (b.day||99));
+  el.innerHTML = sorted.map(s => {
+    const cat = getCat('expense', s.category);
+    const dayLabel = s.day ? `毎月${s.day}日` : '日付未設定';
+    return `<div class="sub-item">
+      <div class="sub-icon" style="background:${cat.color}22">${cat.icon}</div>
+      <div class="sub-info">
+        <div class="sub-name">${s.name}</div>
+        <div class="sub-sub">${dayLabel} · ${s.category}</div>
+      </div>
+      <div class="sub-amt">${fmt(s.amount)}</div>
+      <button class="sub-del" onclick="delSub('${s.id}')" aria-label="削除">×</button>
+    </div>`;
+  }).join('');
 }
 
 function saveEntry(entry) {
@@ -306,14 +641,15 @@ const fmt = n => '¥' + Math.round(n).toLocaleString('ja-JP');
 const getCat = (type,name) => (CATS[type]&&CATS[type][name])||{icon:'📦',color:'#888780'};
 
 function showTab(name) {
-  ['chart','csv','manual','history'].forEach(t => {
+  ['chart','csv','receipt','manual','sub','history'].forEach(t => {
     document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
   });
   document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    b.classList.toggle('active', ['chart','csv','manual','history'][i]===name);
+    b.classList.toggle('active', ['chart','csv','receipt','manual','sub','history'][i]===name);
   });
   if (name==='history') renderHistory();
   if (name==='chart')   renderChart();
+  if (name==='sub')     renderSubs();
 }
 
 function updateCats() {
@@ -534,6 +870,18 @@ function resetCsv() {
 renderSummary();
 setTimeout(renderChart, 50);
 initFirebaseSync();
+initApiKeyField();
+
+// 支払い日セレクトに1〜31日を追加
+(function populateSubDay(){
+  const sel = document.getElementById('subDayInput');
+  for (let d = 1; d <= 31; d++) {
+    const opt = document.createElement('option');
+    opt.value = d;
+    opt.textContent = d + '日';
+    sel.appendChild(opt);
+  }
+})();
 </script>
 </body>
 </html>
