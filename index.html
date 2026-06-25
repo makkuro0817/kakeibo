@@ -886,23 +886,39 @@ function onCsvLoad(e) {
   const reader=new FileReader();
   reader.onload=ev=>{
     const text=ev.target.result;
-    const lines=text.trim().split(/\r?\n/).filter(l=>l.trim());
-    if(lines.length<2){alert('データが見つかりませんでした');return;}
+    const allLines=text.trim().split(/\r?\n/).filter(l=>l.trim());
+    if(allLines.length<2){alert('データが見つかりませんでした');return;}
 
     // BOM除去 & 文字コード対応
     const cleanLine=l=>l.replace(/^\uFEFF/,'');
+
+    // 区切り文字を自動判定（カンマCSV or タブ区切りTSV）
+    const firstLine = cleanLine(allLines[0]);
+    const delimiter = (firstLine.split('\t').length > firstLine.split(',').length) ? '\t' : ',';
+
     const parseLine=l=>{
       const result=[]; let cur=''; let inQ=false;
       for(let i=0;i<l.length;i++){
         if(l[i]==='"'){inQ=!inQ;}
-        else if(l[i]===','&&!inQ){result.push(cur.trim());cur='';}
+        else if(l[i]===delimiter&&!inQ){result.push(cur.trim());cur='';}
         else{cur+=l[i];}
       }
       result.push(cur.trim()); return result;
     };
 
-    csvHeaders=parseLine(cleanLine(lines[0]));
-    csvRows=lines.slice(1,6).map(l=>parseLine(l));
+    // 「ご利用内訳明細」のような見出し行が先頭にある形式（dカード等）に対応:
+    // 「日付・店名・金額」らしき単語を含み、かつ列数が多い行を本当のヘッダーとして探す
+    const HEADER_HINT = /日付|date|利用日|使用日|年月日|店名|店舗|品目|内容|摘要|金額|amount/i;
+    let headerIdx = 0;
+    for (let i = 0; i < Math.min(allLines.length, 10); i++) {
+      const cells = parseLine(cleanLine(allLines[i]));
+      const hintCount = cells.filter(c => HEADER_HINT.test(c)).length;
+      if (cells.length >= 3 && hintCount >= 2) { headerIdx = i; break; }
+    }
+
+    const dataLines = allLines.slice(headerIdx);
+    csvHeaders = parseLine(cleanLine(dataLines[0]));
+    csvRows = dataLines.slice(1, 6).map(l=>parseLine(l));
 
     // プレビュー表示
     document.getElementById('csvArea').classList.add('hidden');
@@ -921,16 +937,26 @@ function onCsvLoad(e) {
         ${Object.entries(getCATS().expense).map(([c,v])=>`<option value="${c}">${v.icon} ${c}</option>`).join('')}
       </select></div>`;
 
-    // ヘッダー名からカラムを自動推定
+    // ヘッダー名からカラムを自動推定（「ご利用年月日」「利用店名」「利用金額」等にも対応、最初に見つかった列を優先）
+    let autoDate=-1, autoName=-1, autoAmt=-1;
     csvHeaders.forEach((h,i)=>{
       const lh=h.toLowerCase();
-      if(/日付|date|利用日|使用日/.test(lh)) document.getElementById('mapDate').value=i;
-      if(/店名|店舗|品目|内容|摘要|name|merchant|description/.test(lh)) document.getElementById('mapName').value=i;
-      if(/金額|amount|利用額|支払|charge/.test(lh)) document.getElementById('mapAmt').value=i;
+      if(autoDate<0 && /日付|date|利用日|使用日|年月日/.test(lh)) autoDate=i;
+      if(autoName<0 && /店名|店舗|利用先|品目|name|merchant|description/.test(lh)) autoName=i;
+      if(autoAmt<0 && /金額|amount|利用額|支払金額|charge/.test(lh)) autoAmt=i;
     });
+    // 「店名」系が見つからない場合のみ「内容」「摘要」を予備候補として使う
+    if (autoName<0) {
+      csvHeaders.forEach((h,i)=>{
+        if(autoName<0 && /内容|摘要/.test(h)) autoName=i;
+      });
+    }
+    if (autoDate>=0) document.getElementById('mapDate').value=autoDate;
+    if (autoName>=0) document.getElementById('mapName').value=autoName;
+    if (autoAmt>=0)  document.getElementById('mapAmt').value=autoAmt;
 
-    // 全行保存
-    csvRows=lines.slice(1).map(l=>parseLine(l));
+    // 全行保存（見出し行より下のデータのみ）
+    csvRows = dataLines.slice(1).map(l=>parseLine(l));
     document.getElementById('csvSetup').classList.remove('hidden');
   };
   reader.readAsText(file,'UTF-8');
@@ -943,21 +969,32 @@ function importCsv() {
   const cat=document.getElementById('mapCat').value;
   if(ni===''||ai===''){alert('店舗・品目列と金額列を選択してください');return;}
 
+  // 「キャッシングご返済明細」など、別セクションが始まったらそこで取り込みを止める
+  const STOP_KEYWORDS = /キャッシング|ご返済明細|お支払予定/;
+  const SKIP_NAME = /^(合計|小計|お取引内容|ご返済年月日|^$)/;
+
   let added=0;
-  csvRows.forEach(row=>{
+  for (const row of csvRows) {
+    const rowJoined = row.join('');
+    if (STOP_KEYWORDS.test(rowJoined)) break;
+
     const name=(row[ni]||'').trim();
     const amtRaw=(row[ai]||'').replace(/[,，\s¥￥]/g,'');
     const amt=parseInt(amtRaw);
-    if(!name||isNaN(amt)||amt<=0) return;
+    if(!name||SKIP_NAME.test(name)||isNaN(amt)||amt<=0) continue;
+
     let date=new Date().toISOString().slice(0,10);
     if(di!==''){
-      const d=(row[di]||'').replace(/[\/．]/g,'-').trim();
-      if(/\d{4}-\d{1,2}-\d{1,2}/.test(d)) date=d;
-      else if(/\d{2}-\d{1,2}-\d{1,2}/.test(d)) date='20'+d;
+      const raw=(row[di]||'').trim();
+      const d=raw.replace(/[\/．]/g,'-');
+      const m4 = d.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+      const m2 = d.match(/^(\d{2})-(\d{1,2})-(\d{1,2})/);
+      if (m4) date = `${m4[1]}-${m4[2].padStart(2,'0')}-${m4[3].padStart(2,'0')}`;
+      else if (m2) date = `20${m2[1]}-${m2[2].padStart(2,'0')}-${m2[3].padStart(2,'0')}`;
     }
     saveEntry({id:genId(),type:'expense',category:cat,name,amount:amt,date,source:'csv'});
     added++;
-  });
+  }
 
   if(added===0){alert('取り込めるデータがありませんでした。列の設定を確認してください。');return;}
   alert(`${added}件を取り込みました！`);
