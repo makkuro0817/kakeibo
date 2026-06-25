@@ -7,6 +7,28 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDbsqxVJNJN9Cyfa3RgAzxZXAa44QnJhAM",
+    authDomain: "kakeibo-makkuro.firebaseapp.com",
+    projectId: "kakeibo-makkuro",
+    storageBucket: "kakeibo-makkuro.firebasestorage.app",
+    messagingSenderId: "21669212421",
+    appId: "1:21669212421:web:c91b1aac38ace5a8fa076c"
+  };
+
+  const fbApp = initializeApp(firebaseConfig);
+  const db = getFirestore(fbApp);
+  const entriesCol = collection(db, "kakeibo_entries");
+
+  // グローバルに公開（通常scriptから呼べるように）
+  window.__firebase = { db, entriesCol, doc, setDoc, deleteDoc, onSnapshot };
+</script>
 <style>
 :root {
   --bg:#f7f6f2; --surface:#fff; --surface2:#f0efe9;
@@ -96,6 +118,7 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
     <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
   </svg>
   <h1>家計簿</h1>
+  <span class="month-pill" id="syncStatus">読み込み中...</span>
   <span class="month-pill" id="monthLabel"></span>
 </div>
 
@@ -220,17 +243,60 @@ const CATS = {
   }
 };
 
-let entries = [
-  {id:1,type:'income', category:'給与',  name:'月給',        amount:250000,date:'2026-05-25',source:'manual'},
-  {id:2,type:'expense',category:'食費',  name:'スーパー',     amount:8400, date:'2026-05-28',source:'manual'},
-  {id:3,type:'expense',category:'交通',  name:'定期券',       amount:12000,date:'2026-05-27',source:'manual'},
-  {id:4,type:'expense',category:'娯楽',  name:'Netflix',     amount:1980, date:'2026-05-26',source:'manual'},
-  {id:5,type:'expense',category:'外食',  name:'ランチ',       amount:3200, date:'2026-05-29',source:'manual'},
-  {id:6,type:'expense',category:'日用品',name:'ドラッグストア',amount:2800, date:'2026-05-30',source:'manual'},
-];
-let nextId = 7;
+let entries = [];
 let chartMode = 'expense', donutChart = null;
 let csvHeaders = [], csvRows = [];
+let fbReady = false;
+
+/* ===== Firebase 同期 ===== */
+function genId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function waitForFirebase(cb) {
+  if (window.__firebase) { cb(window.__firebase); return; }
+  const iv = setInterval(() => {
+    if (window.__firebase) { clearInterval(iv); cb(window.__firebase); }
+  }, 50);
+}
+
+function initFirebaseSync() {
+  waitForFirebase(({ entriesCol, onSnapshot }) => {
+    onSnapshot(entriesCol, (snap) => {
+      entries = [];
+      snap.forEach(d => {
+        const data = d.data();
+        entries.push({ ...data, id: d.id });
+      });
+      fbReady = true;
+      const syncEl = document.getElementById('syncStatus');
+      if (syncEl) { syncEl.textContent = '☁️ 同期済み'; }
+      renderSummary();
+      const activeBtn = document.querySelector('.tab-btn.active');
+      const names = ['chart','csv','manual','history'];
+      const idx = activeBtn ? Array.from(document.querySelectorAll('.tab-btn')).indexOf(activeBtn) : 0;
+      const activeName = names[idx] || 'chart';
+      if (activeName === 'chart') renderChart();
+      if (activeName === 'history') renderHistory();
+    }, (err) => {
+      console.error('Firestore同期エラー:', err);
+    });
+  });
+}
+
+function saveEntry(entry) {
+  waitForFirebase(({ entriesCol, doc, setDoc }) => {
+    const id = entry.id || genId();
+    const { id: _drop, ...rest } = entry;
+    setDoc(doc(entriesCol, id), rest);
+  });
+}
+
+function removeEntry(id) {
+  waitForFirebase(({ entriesCol, doc, deleteDoc }) => {
+    deleteDoc(doc(entriesCol, id));
+  });
+}
 
 document.getElementById('monthLabel').textContent =
   new Date().toLocaleDateString('ja-JP',{year:'numeric',month:'long'});
@@ -357,8 +423,7 @@ function renderHistory() {
 }
 
 function delEntry(id) {
-  entries=entries.filter(e=>e.id!==id);
-  renderSummary(); renderHistory(); renderChart();
+  removeEntry(id);
 }
 
 function addManual() {
@@ -368,10 +433,9 @@ function addManual() {
   const amt=parseInt(document.getElementById('amtInput').value);
   const date=document.getElementById('dateInput').value||new Date().toISOString().slice(0,10);
   if (!amt||amt<=0){alert('金額を入力してください');return;}
-  entries.push({id:nextId++,type,category:cat,name,amount:amt,date,source:'manual'});
+  saveEntry({id:genId(),type,category:cat,name,amount:amt,date,source:'manual'});
   document.getElementById('nameInput').value='';
   document.getElementById('amtInput').value='';
-  renderSummary();
   showTab('chart');
 }
 
@@ -450,14 +514,13 @@ function importCsv() {
       if(/\d{4}-\d{1,2}-\d{1,2}/.test(d)) date=d;
       else if(/\d{2}-\d{1,2}-\d{1,2}/.test(d)) date='20'+d;
     }
-    entries.push({id:nextId++,type:'expense',category:cat,name,amount:amt,date,source:'csv'});
+    saveEntry({id:genId(),type:'expense',category:cat,name,amount:amt,date,source:'csv'});
     added++;
   });
 
   if(added===0){alert('取り込めるデータがありませんでした。列の設定を確認してください。');return;}
   alert(`${added}件を取り込みました！`);
   resetCsv();
-  renderSummary();
   showTab('chart');
 }
 
@@ -470,6 +533,7 @@ function resetCsv() {
 
 renderSummary();
 setTimeout(renderChart, 50);
+initFirebaseSync();
 </script>
 </body>
 </html>
