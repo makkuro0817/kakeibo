@@ -138,10 +138,6 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
 .r-sub{font-size:11px;color:var(--text3);margin-top:2px}
 .r-amt{font-size:14px;font-weight:700;font-family:'DM Mono',monospace;color:var(--red);white-space:nowrap;margin-right:4px}
 .r-cat-select{font-size:12px;padding:5px 6px;border:1px solid var(--border2);border-radius:6px;background:var(--surface);color:var(--text);-webkit-appearance:none;flex-shrink:0;max-width:92px}
-.api-key-box{background:var(--surface2);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px}
-.api-key-box input{width:100%;padding:8px 10px;font-size:13px;font-family:'DM Mono',monospace;border:1px solid var(--border2);border-radius:6px;background:var(--surface);color:var(--text);margin-top:6px}
-.api-key-box .lbl2{font-size:12px;color:var(--text2);display:flex;align-items:center;justify-content:space-between}
-.api-key-box .saved-tag{font-size:10px;color:var(--green);font-weight:700}
 </style>
 </head>
 <body>
@@ -230,39 +226,25 @@ body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text
     </div>
   </div>
 
-  <!-- レシート読み取り（AI） -->
+  <!-- レシート取り込み（Claudeに読んでもらって貼り付け） -->
   <div id="tab-receipt" class="hidden">
     <div class="card">
-      <div class="sec-label">APIキー設定</div>
-      <div class="api-key-box">
-        <div class="lbl2">
-          <span>Anthropic APIキー</span>
-          <span class="saved-tag hidden" id="apiKeySavedTag">✓ 保存済み</span>
-        </div>
-        <input type="password" id="apiKeyInput" placeholder="sk-ant-...">
-        <button class="btn btn-gray" style="margin-top:8px" onclick="saveApiKey()">このブラウザに保存</button>
-      </div>
+      <div class="sec-label">Claudeでレシートを読み取る</div>
       <div class="info-box">
-        APIキーはこのブラウザ内（localStorage）にのみ保存され、Firestoreや他の場所には送信されません。<br>
-        キーは <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> から取得できます。
+        ① レシートの写真をClaudeのチャットに送って読み取ってもらう<br>
+        ② Claudeが出した結果をコピーして、下の欄に貼り付ける<br>
+        ③「読み込む」を押すと品目ごとに分かれて表示されます<br><br>
+        貼り付け形式の例：<br>
+        <span style="font-family:'DM Mono',monospace">バナナ 128円<br>ペーパータオル 418円<br>はちみつ 698円</span>
       </div>
+      <textarea id="pasteInput" placeholder="ここにClaudeの読み取り結果を貼り付けてください" style="width:100%;min-height:120px;padding:10px 12px;font-size:13px;font-family:'Noto Sans JP',sans-serif;border:1px solid var(--border2);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);resize:vertical"></textarea>
+      <button class="btn btn-blue" onclick="parsePastedText()">読み込む</button>
     </div>
-    <div class="card">
-      <div class="sec-label">レシート画像を読み取る</div>
-      <input type="file" id="imgInput" accept="image/*" class="hidden" onchange="onImgChange(event)">
-      <img id="previewImg" class="preview-img hidden">
-      <div class="upload-area" id="imgArea" onclick="document.getElementById('imgInput').click()">
-        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        <div class="u-hint">レシート画像を選択</div>
-        <div class="u-hint2">タップして写真を選ぶ</div>
-      </div>
-      <button class="btn btn-blue hidden" id="scanBtn" onclick="scanReceipt()">✦ AIで読み取る</button>
-      <div id="imgLoading" class="hidden loading"><div class="spinner"></div>AIがレシートを解析中...</div>
-      <div id="imgResult" class="hidden">
-        <div class="sec-label" style="margin-top:14px">読み取り結果（カテゴリは変更できます）</div>
-        <div id="imgItems"></div>
-        <button class="btn btn-green" onclick="addAllImg()">✓ すべて家計簿に追加</button>
-      </div>
+    <div id="pasteResultCard" class="card hidden">
+      <div class="sec-label">読み取り結果（カテゴリは変更できます）</div>
+      <div id="pasteItems"></div>
+      <button class="btn btn-green" onclick="addAllPasted()">✓ すべて家計簿に追加</button>
+      <button class="btn btn-gray" onclick="resetPaste()" style="margin-top:6px">キャンセル</button>
     </div>
   </div>
 
@@ -442,113 +424,86 @@ function delSub(id) {
   removeSub(id);
 }
 
-/* ===== APIキー管理 ===== */
-const API_KEY_STORAGE = 'kakeibo_anthropic_api_key';
+/* ===== Claude貼り付け取り込み ===== */
+let pastedScanned = [];
 
-function loadApiKey() {
-  return localStorage.getItem(API_KEY_STORAGE) || '';
-}
+// よくある単語からカテゴリを推測する簡易ルール
+const CAT_KEYWORDS = {
+  '食費':   ['バナナ','りんご','野菜','肉','魚','米','パン','牛乳','卵','はちみつ','調味料','飲料','お茶','コーヒー','弁当','惣菜'],
+  '外食':   ['ランチ','カフェ','レストラン','定食','ラーメン','ファミレス'],
+  '日用品': ['ペーパー','レジ袋','洗剤','ティッシュ','シャンプー','歯ブラシ','掃除'],
+  '娯楽':   ['映画','ゲーム','本','雑誌','漫画'],
+  '医療':   ['薬','サプリ','マスク','絆創膏','炭酸','ギルティ'],
+  '衣類':   ['シャツ','靴','服','下着'],
+  '通信':   ['携帯','スマホ','wifi','sim'],
+  '光熱費': ['電気','ガス','水道'],
+};
 
-function saveApiKey() {
-  const key = document.getElementById('apiKeyInput').value.trim();
-  if (!key) { alert('APIキーを入力してください'); return; }
-  localStorage.setItem(API_KEY_STORAGE, key);
-  document.getElementById('apiKeySavedTag').classList.remove('hidden');
-  alert('このブラウザに保存しました');
-}
-
-function initApiKeyField() {
-  const saved = loadApiKey();
-  if (saved) {
-    document.getElementById('apiKeyInput').value = saved;
-    document.getElementById('apiKeySavedTag').classList.remove('hidden');
+function guessCategory(name) {
+  const lower = name.toLowerCase();
+  for (const [cat, words] of Object.entries(CAT_KEYWORDS)) {
+    if (words.some(w => lower.includes(w.toLowerCase()))) return cat;
   }
+  // お酒・サワー等はその他扱い（食費カテゴリに入れたくない場合の簡易対応）
+  return 'その他';
 }
 
-/* ===== レシート読み取り（AI） ===== */
-let receiptBase64 = null;
-let imgScanned = [];
+function parsePastedText() {
+  const raw = document.getElementById('pasteInput').value.trim();
+  if (!raw) { alert('テキストを貼り付けてください'); return; }
 
-function onImgChange(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = ev => {
-    receiptBase64 = ev.target.result.split(',')[1];
-    const img = document.getElementById('previewImg');
-    img.src = ev.target.result;
-    img.classList.remove('hidden');
-    document.getElementById('imgArea').classList.add('hidden');
-    document.getElementById('scanBtn').classList.remove('hidden');
-    document.getElementById('imgResult').classList.add('hidden');
-  };
-  reader.readAsDataURL(file);
-}
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+  const items = [];
 
-async function scanReceipt() {
-  const apiKey = loadApiKey();
-  if (!apiKey) {
-    alert('先にAPIキーを入力して保存してください');
-    return;
-  }
-  document.getElementById('scanBtn').classList.add('hidden');
-  document.getElementById('imgLoading').classList.remove('hidden');
-  document.getElementById('imgResult').classList.add('hidden');
+  lines.forEach(line => {
+    // 例: "バナナ 128円" "バナナ：128円" "バナナ ¥128" "バナナ - 128" "| バナナ | ¥128 | 8%対象 |" など対応
+    let cleaned = line.replace(/^\|/, '').replace(/\|$/, '');
+    const cells = cleaned.split('|').map(c => c.trim()).filter(c => c);
+    let name = null, amount = null;
 
-  const catList = Object.keys(CATS.expense).join('、');
-  const prompt = `このレシート画像を解析して、購入品目と金額を読み取り、JSON配列で返してください。\nカテゴリ: ${catList}\n形式（説明文や\`\`\`は不要）:\n[{"name":"品目名","amount":金額(数値),"category":"カテゴリ名"}]\n読み取れない場合は []`;
-
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: receiptBase64 } },
-            { type: 'text', text: prompt }
-          ]
-        }]
-      })
-    });
-    const data = await res.json();
-    if (data.error) {
-      alert('APIエラー: ' + data.error.message);
-      imgScanned = [];
-    } else {
-      const raw = data.content.map(b => b.text || '').join('').trim().replace(/```json|```/g,'').trim();
-      let items = [];
-      try { items = JSON.parse(raw); } catch(e) { items = []; }
-      imgScanned = items.filter(i => i.name && i.amount > 0);
+    if (cells.length >= 2) {
+      // テーブル形式（Claudeの出力をそのまま貼った場合）
+      for (const cell of cells) {
+        const m = cell.match(/[¥￥]?\s*([\d,]+)\s*円?/);
+        if (m && !name) continue;
+        if (m && /^[¥￥\d,円\s]+$/.test(cell)) {
+          amount = parseInt(m[1].replace(/,/g,''));
+        } else if (!name && !/^[¥￥\d,円\s%対象内税]+$/.test(cell) && cell.length > 0 && !/^-+$/.test(cell)) {
+          name = cell;
+        }
+      }
     }
-    renderImgResult();
-    document.getElementById('imgResult').classList.remove('hidden');
-  } catch (err) {
-    alert('読み取りに失敗しました: ' + err.message);
-    imgScanned = [];
-    renderImgResult();
-    document.getElementById('imgResult').classList.remove('hidden');
-  }
-  document.getElementById('imgLoading').classList.add('hidden');
+
+    if (!name || !amount) {
+      // 単純な「品目 金額」形式
+      const m = line.match(/^(.+?)[\s　：:]+[¥￥]?\s*([\d,]+)\s*円?\s*$/);
+      if (m) {
+        name = m[1].trim();
+        amount = parseInt(m[2].replace(/,/g,''));
+      }
+    }
+
+    // ヘッダー行や合計行、見出しっぽい行は除外
+    if (name && amount && amount > 0 &&
+        !/^(品目|商品|合計|小計|内税|税込|割引|---|品名|金額)/.test(name)) {
+      items.push({ name, amount, category: guessCategory(name) });
+    }
+  });
+
+  pastedScanned = items;
+  renderPasteResult();
+  document.getElementById('pasteResultCard').classList.remove('hidden');
 }
 
-function renderImgResult() {
-  const el = document.getElementById('imgItems');
-  if (!imgScanned.length) {
-    el.innerHTML = '<div class="empty">読み取れませんでした。別の画像をお試しください。</div>';
+function renderPasteResult() {
+  const el = document.getElementById('pasteItems');
+  if (!pastedScanned.length) {
+    el.innerHTML = '<div class="empty">読み取れる品目が見つかりませんでした。形式を確認してください。</div>';
     return;
   }
   const catOptions = Object.keys(CATS.expense)
     .map(c => `<option value="${c}">${CATS.expense[c].icon} ${c}</option>`).join('');
-  el.innerHTML = imgScanned.map((item, i) => {
+  el.innerHTML = pastedScanned.map((item, i) => {
     const cat = getCat('expense', item.category);
     return `<div class="result-item">
       <div class="r-icon" style="background:${cat.color}22">${cat.icon}</div>
@@ -556,23 +511,22 @@ function renderImgResult() {
         <div class="r-name">${item.name}</div>
         <div class="r-sub">${fmt(item.amount)}</div>
       </div>
-      <select class="r-cat-select" onchange="updateScannedCat(${i}, this.value)">
+      <select class="r-cat-select" onchange="updatePastedCat(${i}, this.value)">
         ${catOptions}
       </select>
     </div>`;
   }).join('');
-  // 各セレクトに現在の値をセット
-  imgScanned.forEach((item, i) => {
+  pastedScanned.forEach((item, i) => {
     const sel = el.children[i].querySelector('.r-cat-select');
     if (sel) sel.value = CATS.expense[item.category] ? item.category : 'その他';
   });
 }
 
-function updateScannedCat(index, newCat) {
-  if (imgScanned[index]) {
-    imgScanned[index].category = newCat;
+function updatePastedCat(index, newCat) {
+  if (pastedScanned[index]) {
+    pastedScanned[index].category = newCat;
     const icon = getCat('expense', newCat);
-    const iconEl = document.getElementById('imgItems').children[index].querySelector('.r-icon');
+    const iconEl = document.getElementById('pasteItems').children[index].querySelector('.r-icon');
     if (iconEl) {
       iconEl.textContent = icon.icon;
       iconEl.style.background = icon.color + '22';
@@ -580,19 +534,20 @@ function updateScannedCat(index, newCat) {
   }
 }
 
-function addAllImg() {
-  imgScanned.forEach(item => {
+function addAllPasted() {
+  pastedScanned.forEach(item => {
     saveEntry({ id: genId(), type:'expense', category:item.category, name:item.name, amount:item.amount, date: new Date().toISOString().slice(0,10), source:'receipt' });
   });
-  imgScanned = [];
-  receiptBase64 = null;
-  document.getElementById('previewImg').classList.add('hidden');
-  document.getElementById('imgArea').classList.remove('hidden');
-  document.getElementById('scanBtn').classList.add('hidden');
-  document.getElementById('imgResult').classList.add('hidden');
-  document.getElementById('imgInput').value = '';
+  resetPaste();
   showTab('chart');
 }
+
+function resetPaste() {
+  pastedScanned = [];
+  document.getElementById('pasteInput').value = '';
+  document.getElementById('pasteResultCard').classList.add('hidden');
+}
+
 
 function renderSubs() {
   const total = subscriptions.reduce((s, x) => s + x.amount, 0);
@@ -870,7 +825,6 @@ function resetCsv() {
 renderSummary();
 setTimeout(renderChart, 50);
 initFirebaseSync();
-initApiKeyField();
 
 // 支払い日セレクトに1〜31日を追加
 (function populateSubDay(){
